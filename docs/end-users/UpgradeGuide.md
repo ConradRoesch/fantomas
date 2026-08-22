@@ -103,6 +103,60 @@ Note that `fsharp_multiline_block_brackets_on_same_column` and `fsharp_experimen
 ### console application
 
 * Target framework is now `net10.0`.
+* Warnings and errors are written to standard error instead of standard out. A script that captured standard out to detect failures needs to capture standard error as well. Informational output stays on standard out, including `--version` and the files `--check` reports as needing formatting.
+* A run over a single file reports the path it was given rather than only the file name, so `fantomas src/A.fs` prints `src/A.fs was formatted.` where it printed `A.fs was formatted.`. The same applies to the unchanged, ignored and failure messages. A run over several files already reported the path, so a script that handled both cases can now treat them alike.
+* A file that cannot be parsed is reported with the position of each diagnostic instead of `Could not parse the file.`, one line per diagnostic in the shape `src/A.fs(3,9): error FS0583: Unmatched '('`, followed by the source around the failure with a caret under it. `--check` reported the same failure as an exception dump with a stack trace and now uses this as well. A script that matched on `Could not parse the file.` needs to match on the new text.
+* The `--help` page is written by Fantomas instead of by Argu, and `-h` is accepted alongside `--help`. An argument error prints its complaint on standard error followed by a pointer to `--help`, where it used to print Argu's usage block.
+* `--out` now mirrors the structure of the input folder, and creates the folders it needs.
+* The message for an input path Fantomas cannot work with is the same whether the run formats or checks. `--check` reported `Input path 'x' is unsupported file type` and `Input path 'x' not found` without a full stop, and a run with no input path at all said `Input path is missing.` when formatting and `No input path provided.` when checking. All of them now read `Input path 'x' is an unsupported file type.`, `Input path 'x' not found.` and `No input path provided. Call with --help for usage information.` A script matching on the old text needs updating.
+* A file whose extension is not lowercase, such as `A.FS`, is now formatted. Up to `v7` it was refused as an unsupported file type when named directly, and passed over when found while walking a folder, so a folder run can now touch files it used to leave alone.
+* `fantomas src/ --out src` now formats the folder in place. Up to `v7` a trailing separator made the two paths count as different places, so every file was taken for the previous run's output and skipped: the run printed an empty table and exited 0 without formatting anything. The same applied to `fantomas src --out src/`. A build step that used either spelling was doing nothing and will start doing the work.
+* Several input paths are told apart by asking the file system rather than by whether they carry an extension. Up to `v7`, `fantomas my.stuff src` reported `Failed to format file: my.stuff` and exited 1, because a folder whose name contains a dot was taken for a file. It now formats the folder. The converse also held: a path with no extension was taken for a folder, so naming a file that way ended the whole run rather than that one file.
+* A single file matched by `.fantomasignore` reports `A.fs was ignored.` on standard out. Up to `v7` it printed nothing unless `--verbosity d` was given, even though a folder run whose only file was that same one reported it at normal verbosity. The two now agree.
+
+#### `--out <folder>` mirrors the input folder
+
+Up to `v7`, every file found under the input folder was written straight into the root of the
+output folder, whatever its depth. Nesting collapsed, and two files with the same name in
+different subfolders overwrote each other without a warning. From `v8`, the path of each file
+relative to the input folder is preserved:
+
+```
+# input
+src/A.fs
+src/nested/A.fs
+
+# v7: dotnet fantomas src --out out
+out/A.fs           # whichever of the two was formatted last
+
+# v8: dotnet fantomas src --out out
+out/A.fs
+out/nested/A.fs
+```
+
+This is what [Getting Started](./GettingStarted.html) has always described, so no action is
+needed if you followed the documentation. If you relied on the flattening to collect a tree of
+files into a single folder, that step now has to be done by whatever calls Fantomas.
+
+An output folder that sits inside the input folder is left out of the scan. Up to `v7`, running
+`dotnet fantomas src --out src/formatted` picked the previous run's output back up as input,
+which the flattening hid; with the tree preserved it would nest one folder deeper on every run.
+
+#### `--out` creates the folders it writes into
+
+Up to `v7`, `--out <file>` failed with `Failed to format file` and exit code 1 when the folder
+of the path given to it did not exist. The root of an `--out <folder>` was always created for
+you. From `v8`, Fantomas creates whatever folder it has to write into, which includes the
+subfolders the mirroring above needs:
+
+```bash
+# v7: fails unless ./output exists
+# v8: creates ./output
+dotnet fantomas ./input/array.fs --out ./output/array.fs
+```
+
+If your build script creates the output folders before calling Fantomas, it can keep doing so.
+`mkdir -p` and its equivalents are unaffected by this change.
 
 ### Formatting
 
@@ -220,6 +274,12 @@ let dotted ifaces =
 
 These only affect you if you consume `Fantomas.Core` as a library. Formatting source text through
 `CodeFormatter.FormatDocumentAsync` is unaffected.
+
+#### No longer binary compatible with `v7`
+
+Several discriminated unions are structs now. That changes nothing about how they are constructed,
+matched or compared, so no source of yours has to be edited, but an assembly compiled against `v7`
+has to be rebuilt against `v8`.
 
 #### Exceptions
 
